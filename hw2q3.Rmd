@@ -1,0 +1,191 @@
+---
+title: "AAEC 6950 HW2 Q3"
+author: "wunderwood"
+date: "2024-09-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Set wd, libraries
+```{r}
+setwd("C:\\Users\\Will Underwood\\OneDrive\\Documents\\AAEC 6960\\HW2 Q3")
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+```
+
+# Data Cleaning
+
+### Import Data
+```{r}
+cereals0508 = read_csv("TradeData_9_24_2024_9_17_39.csv")
+cereals0920 = read_csv("TradeData_9_24_2024_9_19_36.csv")
+gdpPHW = read_csv("productivity.csv")
+laborForce = read_csv("laborForce.csv")
+capitalFM = read_csv("capitalFormation.csv", na = "..")
+elevUnder5 = read_csv("elevationData.csv", skip = 4)
+```
+
+### get full cereal data
+```{r}
+cerials0520 = rbind(cereals0508, cereals0920)
+```
+
+### rename, select columns for leftjoin
+```{r}
+gdpPHW = gdpPHW %>% rename(period = TIME_PERIOD, reporterISO = LOCATION, gdpPerHr = OBS_VALUE)
+gdpPHW = gdpPHW %>% select(c("period","reporterISO","gdpPerHr"))
+```
+
+### join gdpPHW to cereal data
+```{r}
+intrCer1 = cerials0520 %>% left_join(gdpPHW, by = c("reporterISO"="reporterISO", "period" = "period"))
+intrCer3 = intrCer1 %>% left_join(gdpPHW, by = c("partnerISO"="reporterISO", "period" = "period"))
+intrCer3 = intrCer3 %>% rename(PgdpPH = gdpPerHr.y)
+intrCer3 = intrCer3 %>% rename(gdpPerHr = gdpPerHr.x)
+```
+
+### prepare capitalFM for pivot
+```{r}
+capitalFM = select(capitalFM, !c('Series Name', 'Series Code', 'Country Name'))
+capitalFM = capitalFM %>% rename(reporterISO =`Country Code`)
+```
+
+### Pivot
+```{r}
+capitalFMlong = capitalFM %>% 
+  pivot_longer(
+    !reporterISO,
+    names_to = "period",
+    values_to = "capForm"
+  )
+```
+
+### make year values numeric
+```{r}
+capitalFMlong$period = as.double(capitalFMlong$period)
+```
+
+### check for and remove duplicate rows in capitalFMlong
+```{r}
+capitalFMlong %>%
+  count(reporterISO, period) %>% 
+  filter(n>1)
+
+capitalFMlong = capitalFMlong %>% 
+  group_by(reporterISO, period) %>% 
+  summarise(capForm = first(capForm), .groups = 'drop')
+```
+
+### Merge intermediate cereal 3 with capitalFMlong
+```{r}
+intrCer2 = intrCer3 %>% left_join(capitalFMlong, by = c("reporterISO","period"))
+intrCer4 = intrCer2 %>%  left_join(capitalFMlong, by = c("partnerISO"= "reporterISO", "period" = "period"))
+intrCer4 = intrCer4 %>% rename(capForm = capForm.x)
+intrCer4 = intrCer4 %>% rename(PcapForm = capForm.y)
+
+```
+
+### prepare laborForce for pivot
+```{r}
+laborForce = laborForce %>% select(!c("Series Name","Series Code", "Country Name"))
+laborForce = laborForce %>% rename("reporterISO" = "Country Code")
+
+```
+
+### pivot
+```{r}
+laborForceLong = laborForce %>% 
+  pivot_longer(
+    !reporterISO,
+    names_to = "period",
+    values_to = "labForce"
+  )
+```
+
+### make year numeric
+```{r}
+laborForceLong$period = as.numeric(laborForceLong$period)
+```
+
+
+### merge intermediate cereal 4 with laborForce
+```{r}
+intrCer5 = intrCer4 %>% left_join(laborForceLong, by = c("reporterISO", "period"))
+q3data = intrCer5 %>% left_join(laborForceLong, by = c("partnerISO"= "reporterISO", "period"))
+q3data = q3data %>% rename(labForce = labForce.x)
+q3data = q3data %>% rename(PlabForce = labForce.y)
+q3data = q3data %>% rename(exports = primaryValue)
+```
+
+### create tech ratio & capital intensity ratio vars, log(those) & log(exports)
+```{r}
+q3data = q3data %>% mutate(techRatio = gdpPerHr/PgdpPH, 
+                           capInt = capForm/labForce,
+                           PcapInt = PcapForm/PlabForce,
+                           capIntRatio = capInt/PcapInt,
+                           LtechRatio = log(techRatio),
+                           LcapIntRatio = log(capIntRatio),
+                           Lexports = log(exports))
+```
+
+### elevation cleaning
+```{r}
+elevUnder5 = elevUnder5 %>% select(c("Country Code", "2015"))
+
+elevUnder5 = elevUnder5 %>% rename("elevU5" = "2015")
+
+```
+```{r}
+q3data = q3data %>% left_join(elevUnder5, by = c("reporterISO" = "Country Code"))
+q3data = q3data %>% left_join(elevUnder5, by = c("partnerISO" = "Country Code"))
+
+q3data = q3data %>% rename("elevU5"= "elevU5.x", "PelevU5" = "elevU5.y")
+```
+
+### remove na & self-trading
+```{r}
+q3data = na.omit(q3data) #omitted rows: partner country is non-oecd, thus not in labor, capital, or tech data
+q3data = q3data %>% filter(reporterISO != partnerISO)
+```
+
+# Q3.a.
+### i.
+### summarize
+```{r}
+q3dataX = filter(q3data, flowCode == "X")
+summary(q3dataX)
+```
+
+### visualize
+```{r}
+ggplot(data= q3dataX) +
+  geom_point(aes(techRatio, exports, color = factor(period)))
+ggplot(data = q3dataX)+
+  geom_point(aes(capIntRatio, exports, color = factor(period)))
+```
+
+# ii
+```{r}
+Loglog = lm(Lexports ~ LtechRatio + LcapIntRatio, data = q3dataX)
+Linlog = lm(exports ~ LtechRatio + LcapIntRatio, data = q3dataX)
+Linlin = lm(exports ~ techRatio + capIntRatio, data = q3dataX)
+
+summary(Loglog)
+summary(Linlog)
+summary(Linlin)
+```
+# Q3.d
+```{r}
+Linlin2 = lm(exports ~ techRatio + capIntRatio + elevU5 , data = q3dataX)
+
+summary(Linlin2)
+```
+
+
+
+
+
